@@ -1,0 +1,98 @@
+table Orders
+	lineageTag: f4a0ab6d-5ba7-43fe-aa3e-38471eec874a
+
+	column OrderID
+		dataType: int64
+		lineageTag: 0826c438-9a9b-4a3a-b49a-893943b47f04
+		summarizeBy: sum
+		sourceColumn: OrderID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Order Date'
+		dataType: dateTime
+		lineageTag: 4914d4d2-7771-4e73-97a7-4c0ea3c16a19
+		summarizeBy: none
+		sourceColumn: Order Date
+
+		annotation SummarizationSetBy = Automatic
+
+	column Product
+		dataType: string
+		lineageTag: d1100a28-1db5-41ef-ba58-e4d5582aa7bf
+		summarizeBy: none
+		sourceColumn: Product
+
+		annotation SummarizationSetBy = Automatic
+
+	column Quantity
+		dataType: int64
+		lineageTag: b85fa87d-e5b8-4300-b27b-cbf462d9ada6
+		summarizeBy: sum
+		sourceColumn: Quantity
+
+		annotation SummarizationSetBy = Automatic
+
+	column Price
+		dataType: decimal
+		lineageTag: a6aaae48-afb8-4f17-8c44-a65faedeb9d0
+		summarizeBy: sum
+		sourceColumn: Price
+
+		annotation SummarizationSetBy = Automatic
+
+	column Region
+		dataType: string
+		lineageTag: 8fe37465-01da-477b-95a8-2beb47e85f4d
+		summarizeBy: none
+		sourceColumn: Region
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Line Total'
+		dataType: decimal
+		lineageTag: 69893025-d8cb-46f1-8d68-73369ef7a660
+		summarizeBy: sum
+		sourceColumn: Line Total
+
+		annotation SummarizationSetBy = Automatic
+
+	column Qty
+		dataType: int64
+		lineageTag: a183aa61-31ee-4420-9559-a250f962253e
+		summarizeBy: sum
+		sourceColumn: Qty
+
+		annotation SummarizationSetBy = Automatic
+
+	column Category
+		dataType: string
+		lineageTag: 37aa6d94-832f-4ae8-ac52-9989c4e8d7e6
+		summarizeBy: none
+		sourceColumn: Category
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Orders = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents("C:\data\orders.csv"), [Delimiter=",", Columns=6, Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers", {{"OrderID", Int64.Type}, {"Order Date", type date}, {"Product", type text}, {"Qty", Int64.Type}, {"Price", type number}, {"Region", type text}}),
+				    #"Trimmed Text" = Table.TransformColumns(#"Changed Type", {{"Product", Text.Trim, type text}}),
+				    #"Capitalized Each Word" = Table.TransformColumns(#"Trimmed Text", {{"Product", Text.Proper, type text}}),
+				    #"Removed Duplicates" = Table.Distinct(#"Capitalized Each Word"),
+				    #"Changed Type1" = Table.TransformColumnTypes(#"Removed Duplicates", {{"Price", Currency.Type}}),
+				    #"Renamed Columns" = Table.RenameColumns(#"Changed Type1", {{"Qty", "Quantity"}}),
+				    #"Added Custom" = Table.AddColumn(#"Renamed Columns", "Line Total", each [Quantity] * [Price], Currency.Type),
+				    #"Filtered Rows" = Table.SelectRows(#"Added Custom", each [Quantity] > 0),
+				    #"Appended Query" = Table.Combine({#"Filtered Rows", OrdersFeb}),
+				    #"Merged Queries" = Table.NestedJoin(#"Appended Query", {"Product"}, Products, {"Product"}, "Products", JoinKind.LeftOuter),
+				    #"Expanded Products" = Table.ExpandTableColumn(#"Merged Queries", "Products", {"Category"}, {"Category"}),
+				    #"Replaced Value" = Table.ReplaceValue(#"Expanded Products", "", "Unknown", Replacer.ReplaceValue, {"Region"})
+				in
+				    #"Replaced Value"
+
+	annotation PBI_ResultType = Table
+

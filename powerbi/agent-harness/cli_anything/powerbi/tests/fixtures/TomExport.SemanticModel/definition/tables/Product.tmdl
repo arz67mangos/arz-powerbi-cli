@@ -1,0 +1,19 @@
+table Product
+	lineageTag: ab130c26-26ef-4e17-9a84-0ce0d05da151
+
+	column Product
+		dataType: string
+		lineageTag: b69ac136-8d37-47a2-90b8-30cd6ba1e36f
+		summarizeBy: none
+		sourceColumn: [Product]
+
+	column Category
+		dataType: string
+		lineageTag: 08718b8e-496e-4b20-a981-c06570ace62a
+		summarizeBy: none
+		sourceColumn: [Category]
+
+	partition Product = calculated
+		mode: import
+		source = DATATABLE("Product", STRING, "Category", STRING, {{"Widget","Tools"},{"Gadget","Toys"}})
+

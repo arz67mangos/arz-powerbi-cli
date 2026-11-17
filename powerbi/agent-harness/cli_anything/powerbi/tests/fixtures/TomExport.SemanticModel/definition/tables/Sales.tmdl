@@ -1,0 +1,45 @@
+table Sales
+	lineageTag: 37ded8c9-d685-4e56-94a8-edeeecfc7853
+
+	/// Sum of amount
+	measure 'Total Sales' = SUM(Sales[Amount])
+		formatString: #,0.00
+		displayFolder: KPIs
+		lineageTag: 7b1cd352-49a9-4307-9149-b791fda9e7e3
+
+	measure 'Average Sale' =
+			VAR n = COUNTROWS(Sales)
+			RETURN DIVIDE([Total Sales], n)
+		formatString: 0.0
+		lineageTag: 6ec0a238-e6fb-49f8-94a7-7abf77b3be35
+
+	column Date
+		dataType: dateTime
+		lineageTag: 0b6c5157-4f35-493b-94ad-2b5954dc58fd
+		summarizeBy: none
+		sourceColumn: [Date]
+
+	column Product
+		dataType: string
+		lineageTag: 2297d675-5f13-4f83-b513-5c8ae25e111d
+		summarizeBy: none
+		sourceColumn: [Product]
+
+	column Amount
+		dataType: double
+		lineageTag: 4446e2f2-0259-4394-b8be-e973096a8a40
+		summarizeBy: sum
+		sourceColumn: [Amount]
+
+	partition Sales = calculated
+		mode: import
+		source =
+				DATATABLE(
+					"Date", DATETIME, "Product", STRING, "Amount", DOUBLE,
+					{
+						{ "2026-01-01", "Widget", 120 },
+						{ "2026-01-02", "Gadget", 80 },
+						{ "2026-01-03", "Widget", 45.5 }
+					}
+				)
+

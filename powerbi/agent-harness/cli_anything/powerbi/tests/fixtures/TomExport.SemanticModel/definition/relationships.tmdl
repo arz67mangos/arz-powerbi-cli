@@ -1,0 +1,4 @@
+relationship aefd3704-8a99-4a3a-aa00-a3117cabbe6a
+	fromColumn: Sales.Product
+	toColumn: Product.Product
+

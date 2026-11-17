@@ -1,0 +1,63 @@
+table OrdersFeb
+	lineageTag: 1d8d544b-d95c-48a4-8faf-db48d811893f
+
+	column OrderID
+		dataType: int64
+		lineageTag: 5007afb0-17ad-41f3-8530-1bff7ef80da9
+		summarizeBy: sum
+		sourceColumn: OrderID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Order Date'
+		dataType: dateTime
+		lineageTag: 877a6f30-bc91-4041-82b2-3bd152d479de
+		summarizeBy: none
+		sourceColumn: Order Date
+
+		annotation SummarizationSetBy = Automatic
+
+	column Product
+		dataType: string
+		lineageTag: a40d378b-754e-4b43-bfc0-363287eaac28
+		summarizeBy: none
+		sourceColumn: Product
+
+		annotation SummarizationSetBy = Automatic
+
+	column Qty
+		dataType: int64
+		lineageTag: 9b1bc3ef-4f7a-401d-933f-9d43d2294faa
+		summarizeBy: sum
+		sourceColumn: Qty
+
+		annotation SummarizationSetBy = Automatic
+
+	column Price
+		dataType: double
+		lineageTag: bc7e3e87-8ffa-4a23-99bc-a9a41903faa1
+		summarizeBy: sum
+		sourceColumn: Price
+
+		annotation SummarizationSetBy = Automatic
+
+	column Region
+		dataType: string
+		lineageTag: dce057b5-ef96-4e61-b492-ede1a3b12020
+		summarizeBy: none
+		sourceColumn: Region
+
+		annotation SummarizationSetBy = Automatic
+
+	partition OrdersFeb = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents("C:\data\orders_feb.csv"), [Delimiter=",", Columns=6, Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers", {{"OrderID", Int64.Type}, {"Order Date", type date}, {"Product", type text}, {"Qty", Int64.Type}, {"Price", type number}, {"Region", type text}})
+				in
+				    #"Changed Type"
+
+	annotation PBI_ResultType = Table
+

@@ -1,0 +1,40 @@
+table Products
+	lineageTag: cca2626e-d859-42f5-b659-d885943e4ef9
+
+	column Product
+		dataType: string
+		lineageTag: ac5bc460-a07b-405a-ad6d-985d970ff4c9
+		summarizeBy: none
+		sourceColumn: Product
+
+		annotation SummarizationSetBy = Automatic
+
+	column Category
+		dataType: string
+		lineageTag: 831c8a80-c5d4-4ef1-ad91-562089460764
+		summarizeBy: none
+		sourceColumn: Category
+
+		annotation SummarizationSetBy = Automatic
+
+	column Launched
+		dataType: dateTime
+		lineageTag: cc29f351-4ef6-40ed-a17c-d3ea204a60e2
+		summarizeBy: none
+		sourceColumn: Launched
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Products = m
+		mode: import
+		source =
+				let
+				    Source = Excel.Workbook(File.Contents("C:\data\products.xlsx"), null, true),
+				    Products_Sheet = Source{[Item="Products",Kind="Sheet"]}[Data],
+				    #"Promoted Headers" = Table.PromoteHeaders(Products_Sheet, [PromoteAllScalars=true]),
+				    #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers", {{"Product", type text}, {"Category", type text}, {"Launched", type date}})
+				in
+				    #"Changed Type"
+
+	annotation PBI_ResultType = Table
+
