@@ -38,3 +38,7 @@ Open the `.pbip` in Power BI Desktop to see the result.
 - [POWERBI.md](powerbi/agent-harness/POWERBI.md): how GUI actions map to CLI commands, and the file format notes
 - [Agent skill](skills/cli-anything-powerbi/SKILL.md): for Claude Code and other AI agents
 - [Tests](powerbi/agent-harness/cli_anything/powerbi/tests/TEST.md): `pip install -e .[test]` then `pytest cli_anything/powerbi/tests`
+
+## License
+
+MIT. See [LICENSE](LICENSE).
