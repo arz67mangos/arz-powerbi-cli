@@ -579,6 +579,9 @@ class TestVisualsSubprocess:
             assert isinstance(self._j(["desktop", "windows"]), list)
             r = self._run(["--json"] + p + ["desktop", "screenshot", str(d / "x.png")], check=False)
             assert r.returncode == 1 and "No Power BI Desktop window" in json.loads(r.stdout)["error"]
+        h = self._run(["desktop", "reload", "--help"]).stdout
+        assert "--refresh / --no-refresh" in h and "--discard-changes" in h and "Don't save" in h
+        assert "--pages" in self._run(["desktop", "verify", "--help"]).stdout
 
     def test_custom_visuals(self, demo):
         d, pbip = demo

@@ -1241,3 +1241,34 @@ def test_desktop_window_helpers():
     assert B.close_desktop("no-such-report-xyz", timeout=1) == []       # nothing open: nothing to close
     with pytest.raises(B.PowerBIError, match="No Power BI Desktop window"):
         B.screenshot_desktop("no-such-report-xyz", "unused.png")
+    with pytest.raises(B.PowerBIError, match="No Power BI Desktop window"):
+        B.refresh_desktop("no-such-report-xyz")
+    assert B._save_prompts(999999) == []                                   # no such process: no prompt
+    assert B.discard_and_close("no-such-report-xyz", 999999) is False     # never clicks anything then
+
+
+def test_color_point_uses_series_column(proj):
+    proj.add_measure("Sales", "Total", "SUM(Sales[Amount])")
+    vid = proj.add_visual("Page 1", "area", ["[Total]"], "Sales.Date", roles={"Series": ["Sales.Product"]})
+    proj.color_visual("Page 1", vid, "#FF0000", point="Widget")
+    cmp_ = _visual(proj, vid)["objects"]["dataPoint"][0]["selector"]["data"][0]["scopeId"]["Comparison"]
+    assert cmp_["Left"]["Column"]["Property"] == "Product"            # the legend column, not Date
+    plain = proj.add_visual("Page 1", "column", ["[Total]"], "Sales.Product")
+    proj.color_visual("Page 1", plain, "#FF0000", point="Widget")
+    cmp_ = _visual(proj, plain)["objects"]["dataPoint"][0]["selector"]["data"][0]["scopeId"]["Comparison"]
+    assert cmp_["Left"]["Column"]["Property"] == "Product"
+
+
+def test_bom_files_flagged_and_rewritten(proj):
+    proj.save()
+    root = Path(proj.pbip).parent
+    pagej = next(root.rglob("page.json"))
+    tbl = next(root.rglob("Sales.tmdl"))
+    for f in (pagej, tbl):
+        f.write_bytes(b"\xef\xbb\xbf" + f.read_bytes())
+    again = P.Project(str(proj.pbip))
+    msgs = [i for i in again.validate() if "BOM" in i["message"]]
+    assert {m["where"].split("/")[-1] for m in msgs} == {"page.json", "Sales.tmdl"}
+    again.save()
+    assert not pagej.read_bytes().startswith(b"\xef\xbb\xbf") and not tbl.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert not [i for i in P.Project(str(proj.pbip)).validate() if "BOM" in i["message"]]

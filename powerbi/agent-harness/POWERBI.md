@@ -52,7 +52,8 @@ its two documented, scriptable surfaces:
 | Drag / resize / bring forward | `visual move PAGE ID --x --y -W -H --z` |
 | Format pane: which cards/properties exist | `visual props TYPE` (common ones, not exhaustive) |
 | Insert › Text box, font size/colour/alignment, box fill/border | `visual add PAGE textbox -f TEXT [-f TEXT2] --size --color --align --bg --border --radius` |
-| Close and reopen the file to see on-disk edits | `desktop reload [PBIP] [--page P] [--screenshot out.png]` |
+| Close and reopen the file to see on-disk edits | `desktop reload [PBIP] [--page P] [--no-refresh] [--discard-changes] [--screenshot out.png]` |
+| Reload, refresh, screenshot every page and lint | `desktop verify [PBIP] [--pages all\|P1,P2] [--out-dir DIR]` |
 | Look at the report | `desktop screenshot out.png` (PNG of the Desktop window) |
 | Spot clipped text / overlaps before opening | `project check-visuals [PAGE]` |
 | Format page › Canvas background / Wallpaper | `page format PAGE --background #hex [--wallpaper #hex]`, or `background.transparency=N` |
@@ -161,7 +162,16 @@ its two documented, scriptable surfaces:
   process to exit, reopens the file and waits for the window plus `--settle` seconds. It never answers
   dialogs: a save prompt makes it stop with an error. `--page` sets `pages.json` `activePageName` first.
   `desktop screenshot` uses PrintWindow (PW_RENDERFULLCONTENT), so it works while the window is covered,
-  and writes the PNG with the standard library. Data isn't refreshed from sources.
+  and writes the PNG with the standard library.
+- **Refresh, page switch, save prompt (checked 2026-11-21)**: Desktop's report UI is WebView2, whose
+  accessibility tree stays off until a client asks; the CLI pokes each `Chrome_RenderWidgetHostHWND`
+  through MSAA, then UI Automation (raw view) finds the "Refresh now" button in `reportView.html` and
+  the page tabs (TabItem, SelectionItem). `--refresh` invokes that button by exact name and waits for it
+  and the refresh dialog to go. The save prompt is a separate IE-hosted window titled "Microsoft Power BI
+  Desktop" that UIA can't see into; MSAA shows "Do you want to save your changes?" with push buttons
+  Save / Don't save / Cancel. `--discard-changes` checks for that text and invokes only "Don't save".
+- **BOM**: Desktop rejects files that start with a UTF-8 BOM. The CLI reads with `utf-8-sig`, writes
+  plain UTF-8, and `project validate` lists BOM files until a `project save` rewrites them.
 - **Checked in Desktop 2026-11-21**: donut/pie percent decimals are `labels.percentageLabelPrecision`
   (`labelPrecision` left 32.59%; `percentageLabelPrecision=0` gave 33%). `visual color --point` on a
   scatter with a Category colours that point.

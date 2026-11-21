@@ -79,6 +79,9 @@ class ReportMixin:
                 r = f.relative_to(self.report_dir).as_posix()
                 if f.is_file() and not r.startswith(".pbi/") and (f.suffix == ".json" or f.name == "definition.pbir"):
                     self.rfiles[r] = f.read_text(encoding="utf-8-sig")
+                    from cli_anything.powerbi.core.project import _has_bom
+                    if hasattr(self, "bom_files") and _has_bom(f):
+                        self.bom_files.add(RP + r)
 
     # ── low level ──
     def _pbir(self):
@@ -489,9 +492,12 @@ class ReportMixin:
                 ents = vis.setdefault("objects", {}).setdefault("dataPoint", [])
                 ents[:] = [e for e in ents if "selector" in e] + [plain]
         elif point is not None:
-            cat = next((r for r in ("Category", "Group", "Rows", "TrendLine") if r in state), None)
+            # With a legend (Series) the colours belong to series values, so the selector must compare the
+            # Series column; Desktop ignores a Category comparison there. Otherwise colour one category value.
+            cat = next((r for r in ("Series", "Category", "Group", "Rows", "TrendLine")
+                        if state.get(r, {}).get("projections")), None)
             if not cat:
-                raise ProjectError("This visual has no category to colour a single point of")
+                raise ProjectError("This visual has no category or legend field to colour a single value of")
             entry["selector"] = {"data": [{"scopeId": {"Comparison": {
                 "ComparisonKind": 0, "Left": state[cat]["projections"][0]["field"],
                 "Right": V.literal(point)["expr"] if not V.HEX.match(point) else {"Literal": {"Value": f"'{point}'"}}}}}]}

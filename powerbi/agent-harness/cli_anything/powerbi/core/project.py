@@ -23,6 +23,12 @@ def _read(p: Path) -> str:
     return p.read_text(encoding="utf-8-sig")
 
 
+def _has_bom(p: Path) -> bool:
+    import codecs
+    with open(p, "rb") as fh:
+        return fh.read(3) == codecs.BOM_UTF8
+
+
 def locate(path: str) -> tuple[Path | None, Path]:
     """Return (pbip_file or None, semantic_model_dir) for a .pbip file, a folder
     holding one, or a *.SemanticModel folder."""
@@ -306,10 +312,16 @@ class Project(PowerQueryMixin, ReportMixin):
             raise ProjectError(f"Missing TMDL definition folder: {self.definition}")
         self.name = self.pbip.stem if self.pbip else self.model_dir.name.removesuffix(".SemanticModel")
         self.files: dict[str, str] = {}   # rel path (posix) -> text, all .tmdl under definition/
+        # Desktop rejects files with a UTF-8 BOM ("Only text with UTF8 encoding without BOM"). Note them and
+        # mark them dirty so the next save rewrites them BOM-less (all writes use plain "utf-8").
+        self.bom_files: set[str] = set()
         for f in sorted(self.definition.rglob("*.tmdl")):
-            self.files[f.relative_to(self.definition).as_posix()] = _read(f)
-        self.dirty: set[str] = set()
+            rel = f.relative_to(self.definition).as_posix()
+            self.files[rel] = _read(f)
+            if _has_bom(f):
+                self.bom_files.add(rel)
         self._load_report()
+        self.dirty: set[str] = set(self.bom_files)
 
     # ── persistence ──
     def snapshot(self):
@@ -468,6 +480,10 @@ class Project(PowerQueryMixin, ReportMixin):
         def err(where, msg, level="error"):
             issues.append({"level": level, "where": where, "message": msg})
 
+        for b in sorted(self.bom_files):
+            where = ("report/" + b[len(RP):]) if b.startswith(RP) else b
+            err(where, "starts with a UTF-8 BOM, which Desktop rejects ('Only text with UTF8 encoding without "
+                       "BOM'); run 'project save' to rewrite it without one")
         if not (self.model_dir / "definition.pbism").exists():
             err("definition.pbism", "missing")
         if "model.tmdl" not in self.files:

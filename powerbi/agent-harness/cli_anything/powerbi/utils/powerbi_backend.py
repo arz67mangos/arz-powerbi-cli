@@ -347,6 +347,199 @@ def wait_for_desktop(stem: str, timeout: float = 120, settle: float = 15) -> dic
     raise PowerBIError(f"No Power BI Desktop window for '{stem}' appeared within {timeout:g}s")
 
 
+# ── UI Automation (Desktop's UI is WebView2; elements are found by exact accessible name) ──
+_UIA_PS = r'''
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$AE = [System.Windows.Automation.AutomationElement]
+$walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+function Find-All($root, $name, $type) {
+  $out = New-Object System.Collections.ArrayList
+  $stack = New-Object System.Collections.Stack; $stack.Push($root); $n = 0
+  while ($stack.Count -gt 0 -and $n -lt 40000) {
+    $e = $stack.Pop(); $c = $walker.GetFirstChild($e)
+    while ($c -ne $null) { $n++
+      if ($c.Current.Name -ceq $name -and ($type -eq "" -or $c.Current.ControlType.ProgrammaticName -eq "ControlType.$type")) { [void]$out.Add($c) }
+      $stack.Push($c); $c = $walker.GetNextSibling($c) }
+  }
+  return ,$out
+}
+function In-View($e, $view) {
+  if ($view -eq "") { return $true }
+  $p = $walker.GetParent($e); $k = 0
+  while ($p -ne $null -and $k -lt 80) { if ($p.Current.Name -like "*$view.html - Web content") { return $true }; $p = $walker.GetParent($p); $k++ }
+  return $false
+}
+$pc = New-Object System.Windows.Automation.PropertyCondition($AE::ProcessIdProperty, [int]__PID__)
+$tops = $AE::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $pc)
+$action = '__ACTION__'; $name = '__NAME__'; $type = '__TYPE__'; $view = '__VIEW__'; $title = '__TITLE__'
+$hits = @()
+foreach ($t in $tops) {
+  if ($title -ne "" -and -not ($t.Current.Name -like "*$title*")) { continue }
+  foreach ($h in (Find-All $t $name $type)) { if (In-View $h $view) { $hits += ,@($t, $h) } }
+}
+if ($action -eq "windows") { foreach ($t in $tops) { "WIN`t" + $t.Current.Name + "`t" + $t.Current.ClassName }; exit 0 }
+if ($hits.Count -eq 0) { "NOTFOUND"; exit 0 }
+$el = $hits[0][1]
+if ($action -eq "exists") { "FOUND`t" + $hits[0][0].Current.Name; exit 0 }
+if ($action -eq "invoke") { $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); "OK`t" + $hits[0][0].Current.Name; exit 0 }
+if ($action -eq "select") { $el.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); "OK`t" + $hits[0][0].Current.Name; exit 0 }
+'''
+
+
+def _wake_accessibility(hwnd: int):
+    """Chromium builds its accessibility tree only once a client asks; poke each render host via MSAA."""
+    ctypes, wintypes, u, k = _user32()
+    hosts = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def cb(h, _):
+        buf = ctypes.create_unicode_buffer(64)
+        u.GetClassNameW(h, buf, 64)
+        if buf.value in ("Chrome_RenderWidgetHostHWND", "Internet Explorer_Server"):  # WebView2 UI; IE-hosted dialogs
+            hosts.append(h)
+        return True
+    u.EnumChildWindows(hwnd, cb, 0)
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("a", ctypes.c_ulong), ("b", ctypes.c_ushort), ("c", ctypes.c_ushort), ("d", ctypes.c_ubyte * 8)]
+    iid = GUID(0x618736E0, 0x3C3D, 0x11CF, (ctypes.c_ubyte * 8)(0x81, 0x0C, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71))
+    for h in hosts:                                         # IID_IAccessible, OBJID_CLIENT
+        p = ctypes.c_void_p()                               # ponytail: object not released; CLI process is short-lived
+        ctypes.windll.oleacc.AccessibleObjectFromWindow(h, ctypes.c_long(-4), ctypes.byref(iid), ctypes.byref(p))
+    return len(hosts)
+
+
+def uia(pid: int, action: str, name: str = "", ctype: str = "", view: str = "", title: str = "") -> str:
+    """Run one UI Automation action in the Desktop process PID. Names match exactly (case-sensitive).
+    action: exists | invoke | select | windows. Returns the script's first output line."""
+    vals = {"__PID__": str(int(pid)), "__ACTION__": action, "__NAME__": name, "__TYPE__": ctype,
+            "__VIEW__": view, "__TITLE__": title}
+    script = _UIA_PS
+    for k_, v in vals.items():
+        script = script.replace(k_, v.replace("'", "''"))
+    return _run_ps(script)
+
+
+def _main_window(stem: str) -> dict:
+    wins = desktop_windows(stem)
+    if not wins:
+        raise PowerBIError(f"No Power BI Desktop window is showing '{stem}'")
+    return wins[0]
+
+
+def refresh_desktop(stem: str, timeout: float = 600) -> dict:
+    """Click the report's 'Refresh now' button (the 'incomplete or no data' / 'calculated tables need to be
+    refreshed' bar) and wait until the bar and the refresh dialog are gone. Exact name match only."""
+    w = _main_window(stem)
+    _wake_accessibility(w["hwnd"])
+    time.sleep(1)
+    if uia(w["pid"], "invoke", "Refresh now", "Button", "reportView").startswith("NOTFOUND"):
+        return {"refreshed": False, "note": "no 'Refresh now' button (data already loaded)"}
+    start = time.time()
+    time.sleep(3)
+    while time.time() - start < timeout:
+        bar = uia(w["pid"], "exists", "Refresh now", "Button", "reportView").startswith("FOUND")
+        extra = [l for l in uia(w["pid"], "windows").splitlines() if l.startswith("WIN\t")]
+        if not bar and len(extra) <= 1:             # only the main window: refresh dialog closed
+            return {"refreshed": True, "seconds": round(time.time() - start, 1)}
+        time.sleep(2)
+    raise PowerBIError(f"Refresh still running after {timeout:g}s")
+
+
+def show_page(stem: str, page: str) -> bool:
+    """Switch the open report to PAGE by selecting its page tab (exact display name)."""
+    w = _main_window(stem)
+    _wake_accessibility(w["hwnd"])
+    return uia(w["pid"], "select", page, "TabItem", "reportView").startswith("OK")
+
+
+# The save prompt is an IE-hosted page that UIA can't see into; MSAA can. Role 43 = push button.
+_MSAA_PS = r'''
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName Accessibility
+Add-Type -ReferencedAssemblies Accessibility -TypeDefinition @"
+using System; using System.Collections.Generic; using System.Runtime.InteropServices; using Accessibility;
+public static class Msaa {
+  [DllImport("oleacc.dll")] static extern int AccessibleObjectFromWindow(IntPtr h, uint id, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out object o);
+  [DllImport("oleacc.dll")] static extern int AccessibleChildren(IAccessible p, int start, int n, [Out] object[] kids, out int got);
+  static string S(Func<object> f) { try { var r = f(); return r == null ? "" : r.ToString(); } catch { return ""; } }
+  public static string Run(long hwnd, string prompt, string button, bool click) {
+    Guid g = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71"); object o;
+    AccessibleObjectFromWindow(new IntPtr(hwnd), 0xFFFFFFFC, ref g, out o);
+    var names = new List<string>(); IAccessible hit = null; Walk((IAccessible)o, 0, prompt, button, names, ref hit);
+    if (!names.Contains(prompt)) return "NOPROMPT";
+    if (hit == null) return "NOTFOUND";
+    if (click) hit.accDoDefaultAction(0);
+    return "OK";
+  }
+  static void Walk(IAccessible a, int d, string prompt, string button, List<string> names, ref IAccessible hit) {
+    int n = 0; try { n = a.accChildCount; } catch { }
+    if (n <= 0 || d > 30) return;
+    object[] k = new object[n]; int got; AccessibleChildren(a, 0, n, k, out got);
+    for (int i = 0; i < got; i++) {
+      var c = k[i] as IAccessible;
+      if (c == null) { object id = k[i]; names.Add(S(() => a.get_accName(id))); continue; }
+      string name = S(() => c.get_accName(0)); names.Add(name);
+      if (hit == null && name == button && S(() => c.get_accRole(0)) == "43") hit = c;
+      Walk(c, d + 1, prompt, button, names, ref hit);
+    }
+  }
+}
+"@
+[Msaa]::Run(__HWND__, 'Do you want to save your changes?', "Don't save", $__CLICK__)
+'''
+
+
+def _run_ps(script: str) -> str:
+    import base64
+    enc = base64.b64encode(script.encode("utf-16-le")).decode()
+    r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                        "-EncodedCommand", enc], capture_output=True, text=True, timeout=120)
+    out = (r.stdout or "").strip()
+    if r.returncode != 0 and not out:
+        raise PowerBIError(f"UI Automation failed: {(r.stderr or '').strip()[:300]}")
+    return out
+
+
+def _save_prompts(pid: int) -> list[int]:
+    """IE-server hwnds inside visible 'Microsoft Power BI Desktop' windows of PID (the save prompt)."""
+    ctypes, wintypes, u, k = _user32()
+    tops, hosts = [], []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def top(h, _):
+        p = wintypes.DWORD()
+        u.GetWindowThreadProcessId(h, ctypes.byref(p))
+        buf = ctypes.create_unicode_buffer(256)
+        u.GetWindowTextW(h, buf, 256)
+        if p.value == pid and u.IsWindowVisible(h) and buf.value == "Microsoft Power BI Desktop":
+            tops.append(h)
+        return True
+    u.EnumWindows(top, 0)
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def child(h, _):
+        buf = ctypes.create_unicode_buffer(64)
+        u.GetClassNameW(h, buf, 64)
+        if buf.value == "Internet Explorer_Server":
+            hosts.append(h)
+        return True
+    for t in tops:
+        u.EnumChildWindows(t, child, 0)
+    return hosts
+
+
+def discard_and_close(stem: str, pid: int, click: bool = True) -> bool:
+    """If Desktop process PID shows 'Do you want to save your changes?', invoke ONLY the push button
+    named exactly "Don't save" (never Save/Cancel). Returns True if it did (or, click=False, would)."""
+    for h in _save_prompts(pid):
+        script = _MSAA_PS.replace("__HWND__", str(int(h))).replace("$__CLICK__", "$true" if click else "$false")
+        if _run_ps(script).startswith("OK"):
+            return True
+    return False
+
+
 def screenshot_desktop(stem: str, out: str) -> dict:
     """Save a PNG of the Desktop window for STEM (works while it is covered by other windows)."""
     import struct

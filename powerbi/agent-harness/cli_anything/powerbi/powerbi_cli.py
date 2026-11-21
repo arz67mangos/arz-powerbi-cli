@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import sys
+import time
 from pathlib import Path
 
 import click
@@ -1318,31 +1319,102 @@ def _desktop_target(path):
     return path, Path(path).stem
 
 
-@desktop.command("reload")
-@click.argument("path", required=False)
-@click.option("--page", help="Open on this page (sets the report's active page first)")
-@click.option("--wait", "wait_s", default=120.0, show_default=True, help="Max seconds to wait for close/open")
-@click.option("--settle", default=15.0, show_default=True, help="Seconds to let visuals render after opening")
-@click.option("--screenshot", "shot", type=click.Path(dir_okay=False), help="Then save a PNG of the window")
-@handle
-def desktop_reload(path, page, wait_s, settle, shot):
-    """Close Desktop for this .pbip (never answers a save prompt), reopen it and wait for it to load.
-
-    Desktop doesn't pick up edits made on disk; this does the close/reopen. If Desktop asks to save,
-    the command stops: choose 'Don't save' there to keep the CLI's edits. Data isn't refreshed from
-    sources (Home > Refresh), but new measures and report edits show without it."""
+def _reload(path, page, wait_s, settle, refresh, discard):
+    """Close (optionally discarding unsaved GUI edits), reopen, wait, refresh. -> (result, stem)."""
     path, stem = _desktop_target(path)
     if page:
         p = proj_mod.Project(path)
         p.set_active_page(page)
         p.save()
-    closed = pbi.close_desktop(stem, timeout=min(wait_s, 60))
+    pids = sorted({w["pid"] for w in pbi.desktop_windows(stem)})
+    discarded = False
+    try:
+        closed = pbi.close_desktop(stem, timeout=min(wait_s, 60))
+    except pbi.PowerBIError:
+        if not discard:
+            raise
+        discarded = any([pbi.discard_and_close(stem, pid) for pid in pids])
+        if not discarded:
+            raise pbi.PowerBIError(f"Desktop ({stem}) didn't close and no 'Don't save' button was found; "
+                                   "close it by hand, then run the command again.")
+        end = time.time() + 60
+        while time.time() < end and any(pbi._pid_alive(x) for x in pids):
+            time.sleep(0.5)
+        if any(pbi._pid_alive(x) for x in pids):
+            raise pbi.PowerBIError(f"Desktop ({stem}) is still open after choosing 'Don't save'")
+        closed = pids
     opened = pbi.open_in_desktop(path)
     win = pbi.wait_for_desktop(stem, timeout=wait_s, settle=settle)
-    res = {"closed_pids": closed, "opened": opened["opened"], "pid": win["pid"], "title": win["title"]}
+    res = {"closed_pids": closed, "discarded_changes": discarded, "opened": opened["opened"],
+           "pid": win["pid"], "title": win["title"]}
+    if refresh:
+        r = pbi.refresh_desktop(stem)
+        res["refreshed"] = r["refreshed"]
+        res["refresh_note"] = r.get("note") or f"refreshed in {r['seconds']}s"
+        if not r["refreshed"]:
+            click.secho(f"Note: {r['note']}", fg="yellow", err=True)
+    return res, stem
+
+
+@desktop.command("reload")
+@click.argument("path", required=False)
+@click.option("--page", help="Open on this page (sets the report's active page first)")
+@click.option("--wait", "wait_s", default=120.0, show_default=True, help="Max seconds to wait for close/open")
+@click.option("--settle", default=15.0, show_default=True, help="Seconds to let visuals render after opening")
+@click.option("--refresh/--no-refresh", default=True, show_default=True,
+              help="Click the report's 'Refresh now' bar (exact name, via UI Automation) and wait for the load")
+@click.option("--discard-changes", is_flag=True,
+              help="If Desktop asks to save, click ONLY 'Don't save' (drops edits made in the Desktop GUI)")
+@click.option("--screenshot", "shot", type=click.Path(dir_okay=False), help="Then save a PNG of the window")
+@handle
+def desktop_reload(path, page, wait_s, settle, refresh, discard_changes, shot):
+    """Close Desktop for this .pbip, reopen it, wait for it to load and refresh the data.
+
+    Desktop doesn't pick up edits made on disk; this does the close/reopen. If Desktop asks to save,
+    the command stops (choose 'Don't save' there to keep the CLI's edits) unless --discard-changes."""
+    res, stem = _reload(path, page, wait_s, settle, refresh, discard_changes)
     if shot:
         res.update(pbi.screenshot_desktop(stem, shot))
-    emit(res, msg=f"Reloaded {stem} in Power BI Desktop")
+    emit(res, msg=f"Reloaded {stem} in Power BI Desktop" + ("" if not refresh else f" ({res['refresh_note']})"))
+
+
+@desktop.command("verify")
+@click.argument("path", required=False)
+@click.option("--pages", default="all", show_default=True, help="'all' or comma-separated page names")
+@click.option("--out-dir", type=click.Path(file_okay=False), default="verify", show_default=True)
+@click.option("--wait", "wait_s", default=120.0, show_default=True)
+@click.option("--settle", default=15.0, show_default=True)
+@click.option("--page-settle", default=5.0, show_default=True, help="Seconds to let each page render")
+@click.option("--discard-changes", is_flag=True, help="If Desktop asks to save, click ONLY 'Don't save'")
+@handle
+def desktop_verify(path, pages, out_dir, wait_s, settle, page_settle, discard_changes):
+    """Reload + refresh, screenshot every page, and run check-visuals. Prints the PNG paths."""
+    res, stem = _reload(path, None, wait_s, settle, True, discard_changes)
+    proj = proj_mod.Project(_desktop_target(path)[0])
+    names = [p["displayName"] for p in proj.pages()] if pages == "all" else         [proj._page(n.strip())["displayName"] for n in pages.split(",")]
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    shots = []
+    for i, name in enumerate(names, 1):
+        if not pbi.show_page(stem, name):
+            raise pbi.PowerBIError(f"Couldn't switch Desktop to page '{name}'")
+        time.sleep(page_settle)
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        shots.append(pbi.screenshot_desktop(stem, str(Path(out_dir) / f"{i:02d}-{safe}.png"))["screenshot"])
+    issues = proj.check_visuals()
+    errors = [x for x in issues if x["level"] == "error"]
+    res.update(screenshots=shots, ok=not errors, issues=issues)
+    if _json:
+        emit(res)
+    else:
+        click.echo(f"Reloaded {stem} ({res.get('refresh_note')})")
+        for s_ in shots:
+            click.echo(s_)
+        if issues:
+            emit(issues, cols=["level", "where", "message"])
+        else:
+            click.secho("✓ no layout problems found", fg="green")
+    if errors and not _repl_mode:
+        sys.exit(2)
 
 
 @desktop.command("screenshot")
