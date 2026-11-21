@@ -38,7 +38,7 @@ TYPES = {
     "kpi": ("kpi", {"Indicator": "m!", "TrendLine": "g!", "Goal": "m"}, "TrendLine", "Indicator"),
     "matrix": ("pivotTable", {"Rows": "g", "Columns": "g", "Values": "m!"}, "Rows", "Values"),
     "table": ("tableEx", {"Values": "a!"}, None, "Values"),
-    "slicer": ("slicer", {"Values": "g!"}, None, "Values"),
+    "slicer": ("slicer", {"Values": "g!"}, "Values", "Values"),
 }
 BY_VISUAL_TYPE = {v[0]: k for k, v in TYPES.items()}
 
@@ -46,6 +46,60 @@ BY_VISUAL_TYPE = {v[0]: k for k, v in TYPES.items()}
 CONTAINER_OBJECTS = {"title", "subTitle", "background", "border", "dropShadow", "padding", "divider",
                      "spacing", "visualHeader", "visualTooltip", "visualLink", "stylePreset", "lockAspect"}
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+# properties Desktop stores as doubles even when whole ("0D", not "0L")
+DOUBLE_PROPS = {"transparency"}
+
+# Common Format-pane properties per visual family, for `visual props`. Not exhaustive.
+_CONTAINER = {
+    "title": "show, text, fontColor, fontSize, fontFamily, bold, alignment (left|center|right)",
+    "subTitle": "show, text, fontColor, fontSize",
+    "background": "show, color, transparency (0-100)",
+    "border": "show, color, radius, width",
+    "dropShadow": "show, preset",
+    "padding": "top, bottom, left, right",
+    "visualHeader": "show",
+}
+_AXES = {
+    "legend": "show, position (Top|Bottom|Left|Right|TopCenter|BottomCenter...), showTitle, fontSize, labelColor",
+    "labels": "show, color, fontSize, labelDisplayUnits (0 auto, 1 none, 1000 K, 1000000 M), labelPrecision",
+    "categoryAxis": "show, start, end, fontSize, labelColor, showAxisTitle, titleText, axisType (Categorical|Scalar)",
+    "valueAxis": "show, start, end, fontSize, labelColor, showAxisTitle, titleText, gridlineShow, labelDisplayUnits",
+    "dataPoint": "fill (use 'visual color'), showAllDataPoints",
+}
+_SLICES = {
+    "legend": _AXES["legend"],
+    "labels": "show, color, fontSize, labelStyle (Category|Data value|Percent of total|Category, data value|...)",
+    "dataPoint": _AXES["dataPoint"],
+}
+_FAMILIES = {
+    "axis": (_AXES, ("column", "bar", "stackedcolumn", "stackedbar", "column100", "bar100", "line", "area",
+                     "stackedarea", "combo", "stackedcombo", "ribbon", "waterfall", "scatter")),
+    "slices": (_SLICES, ("pie", "donut", "funnel", "treemap")),
+    "card": ({"labels": "color, fontSize, labelDisplayUnits, labelPrecision",
+              "categoryLabels": "show, color, fontSize"}, ("card", "multicard")),
+    "gauge": ({"axis": "min, max, target", "labels": "show, color, fontSize", "calloutValue": "show, color",
+               "dataPoint": "fill, target (colour)"}, ("gauge",)),
+    "kpi": ({"indicator": "fontSize, indicatorDisplayUnits", "trendline": "show, transparency",
+             "goals": "showGoal, showDistance", "status": "direction (High|Low)"}, ("kpi",)),
+    "grid": ({"grid": "gridHorizontal, gridVertical, rowPadding", "columnHeaders": "fontColor, backColor",
+              "values": "fontColorPrimary, backColorPrimary", "total": "totals (table)",
+              "subTotals": "rowSubtotals, columnSubtotals (matrix)"}, ("table", "matrix")),
+    "slicer": ({"header": "show, fontColor, textSize", "items": "fontColor, textSize",
+                "data": "mode (Basic|Dropdown|Between)", "selection": "singleSelect, selectAllCheckboxEnabled"},
+               ("slicer",)),
+}
+
+
+def props_for(kind: str) -> dict:
+    """{object: 'prop, prop, ...'} for an alias or visualType; container cards included."""
+    alias = kind.lower() if kind.lower() in TYPES else BY_VISUAL_TYPE.get(kind)
+    if alias is None and kind.lower() == "textbox":
+        return {"(text)": "use 'visual add textbox' options --size --color --align --bg --border --radius",
+                **_CONTAINER}
+    for objs, members in _FAMILIES.values():
+        if alias in members:
+            return {**objs, **_CONTAINER}
+    raise ValueError(f"Unknown visual type '{kind}'. Built-in: {', '.join(TYPES)}, textbox")
 # custom visual guids: AppSource ones end in a 13-digit timestamp, pbiviz tools write a 32-hex suffix
 CUSTOM_GUID = re.compile(r"^[A-Za-z][A-Za-z0-9_]*([0-9]{13}|[0-9A-F]{32})(_[A-Za-z]+)?$")
 
@@ -55,11 +109,13 @@ def roles_of(spec: dict) -> dict:
     return {r: {"kind": k.rstrip("!"), "required": k.endswith("!")} for r, k in spec.items()}
 
 
-def literal(value: str) -> dict:
+def literal(value: str, prop: str | None = None) -> dict:
     """CLI string -> PBIR literal expression (bool, number, colour, text)."""
     v = value.strip()
     if v.lower() in ("true", "false"):
         return {"expr": {"Literal": {"Value": v.lower()}}}
+    if prop in DOUBLE_PROPS and re.fullmatch(r"[-+]?\d+", v):
+        return {"expr": {"Literal": {"Value": f"{int(v)}D"}}}
     if re.fullmatch(r"[-+]?\d+", v):
         return {"expr": {"Literal": {"Value": f"{int(v)}L"}}}
     if re.fullmatch(r"[-+]?(\d+\.\d*|\.\d+)", v):

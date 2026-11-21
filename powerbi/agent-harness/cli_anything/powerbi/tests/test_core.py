@@ -1137,3 +1137,62 @@ def test_validate_visual_roles(proj):
     body["visual"]["visualType"] = PROBE                                  # never registered
     proj.rfiles[rel] = json.dumps(body)
     assert any("not registered" in m for _, m in [(i["level"], i["message"]) for i in proj.validate()])
+
+
+# ── feedback round: slicer -c, slicer titles, textbox styling, page format, root keys, props ──
+def test_slicer_category_and_title(proj):
+    vid = proj.add_visual("Page 1", "slicer", category="Sales.Product", title="Product")
+    vis = _visual(proj, vid)
+    assert list(vis["query"]["queryState"]) == ["Values"]
+    assert vis["objects"]["header"][0]["properties"]["show"] == VZ.literal("false")   # no "Product / Product"
+    assert "header" not in _visual(proj, proj.add_visual("Page 1", "slicer", ["Sales.Product"]))["objects"]
+
+
+def test_textbox_styling(proj):
+    vid = proj.add_textbox("Page 1", ["Line one", "Line two"], height=80, size=11, bold=False,
+                           color="#0f766e", align="center", bg="#FFFFFF", border="#0F766E", radius=20)
+    vis = _visual(proj, vid)
+    paras = vis["objects"]["general"][0]["properties"]["paragraphs"]
+    assert [p["textRuns"][0]["value"] for p in paras] == ["Line one", "Line two"]
+    assert paras[0]["horizontalTextAlignment"] == "center"
+    assert paras[0]["textRuns"][0]["textStyle"] == {"fontSize": "11pt", "color": "#0F766E"}
+    box = vis["visualContainerObjects"]
+    assert box["background"][0]["properties"]["transparency"]["expr"]["Literal"]["Value"] == "0D"
+    assert box["border"][0]["properties"]["radius"]["expr"]["Literal"]["Value"] == "20L"
+    assert proj.textbox_min_height(11) <= 40 < proj.textbox_min_height(20)
+    for kw, msg in (({"color": "teal"}, "--color"), ({"align": "justify"}, "--align")):
+        with pytest.raises(P.ProjectError, match=msg):
+            proj.add_textbox("Page 1", "x", **kw)
+
+
+def test_format_page(proj):
+    objs = proj.format_page("Page 1", [("background", "color", "#e3f2ef"), ("outspace", "color", "#FFFFFF")])
+    bg = objs["background"][0]["properties"]
+    assert bg["color"] == VZ.literal("#E3F2EF") and bg["transparency"]["expr"]["Literal"]["Value"] == "0D"
+    proj.format_page("Page 1", [("background", "transparency", "50")])
+    pid = proj.pages()[0]["id"]
+    page = json.loads(proj.rfiles[f"definition/pages/{pid}/page.json"])
+    assert len(page["objects"]["background"]) == 1
+    assert page["objects"]["background"][0]["properties"]["transparency"]["expr"]["Literal"]["Value"] == "50D"
+    assert proj.validate() == []
+
+
+def test_validate_visual_root_keys(proj):
+    vid = proj.add_textbox("Page 1", "Hi", bg="#FFFFFF")
+    pid = proj.pages()[0]["id"]
+    rel = f"definition/pages/{pid}/visuals/{vid}/visual.json"
+    body = json.loads(proj.rfiles[rel])
+    body["visualContainerObjects"] = body["visual"].pop("visualContainerObjects")   # the hand-edit mistake
+    proj.rfiles[rel] = json.dumps(body)
+    msg = next(i["message"] for i in proj.validate() if i["where"] == rel)
+    assert "visualContainerObjects" in msg and "inside \"visual\"" in msg
+
+
+def test_props_for():
+    assert "start" in VZ.props_for("line")["valueAxis"] and "radius" in VZ.props_for("lineChart")["border"]
+    assert "labelStyle" in VZ.props_for("pie")["labels"]
+    assert "show" in VZ.props_for("card")["categoryLabels"]
+    assert "--size" in VZ.props_for("textbox")["(text)"]
+    assert all(VZ.props_for(k) for k in VZ.TYPES)
+    with pytest.raises(ValueError, match="Unknown visual type"):
+        VZ.props_for("sparkle")

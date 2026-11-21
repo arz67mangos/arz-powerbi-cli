@@ -93,6 +93,10 @@ cli-anything-powerbi visual color Overview <id> "#0EA5E9" --series "[Revenue]"
 cli-anything-powerbi visual sort Overview <id> "[Revenue]"
 cli-anything-powerbi visual custom import ./MyVisual.pbiviz         # roles read from the package
 cli-anything-powerbi visual add Overview "My Visual" -r category=Sales.Product -r "measure=[Revenue]"
+cli-anything-powerbi visual props lineChart                        # format objects/properties for a type
+cli-anything-powerbi visual add Overview slicer -c People.Gender -t Gender   # title hides the slicer header
+cli-anything-powerbi visual add Overview textbox -f "Headline" -f "Second line" --size 11 --no-bold \n    --color "#0F766E" --align center --bg "#FFFFFF" --border "#0F766E" --radius 20 -H 60
+cli-anything-powerbi page format Overview --background "#E3F2EF"   # or background.color=... outspace.color=...
 
 # Service
 cli-anything-powerbi auth login

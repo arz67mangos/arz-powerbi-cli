@@ -795,6 +795,24 @@ def page_remove(name):
     emit({"removed": name}, msg=f"Removed page {name}")
 
 
+@page.command("format")
+@click.argument("name")
+@click.argument("settings", nargs=-1)
+@click.option("--background", help="Page canvas colour #RRGGBB (same as background.color=...)")
+@click.option("--wallpaper", help="Wallpaper colour around the canvas #RRGGBB (outspace.color=...)")
+@handle
+def page_format(name, settings, background, wallpaper):
+    """Page formatting: OBJECT.PROPERTY=VALUE ... e.g. background.color=#E3F2EF background.transparency=0."""
+    parsed = [visuals_mod.parse_setting(s) for s in settings]
+    if background:
+        parsed.append(("background", "color", background))
+    if wallpaper:
+        parsed.append(("outspace", "color", wallpaper))
+    if not parsed:
+        raise ValueError("Give OBJECT.PROPERTY=VALUE settings, --background or --wallpaper")
+    emit({"page": name, "objects": _mutate().format_page(name, parsed)}, msg=f"Formatted page {name}")
+
+
 def _chart_spec(spec: str) -> dict:
     """TYPE:CATEGORY:VALUE[,VALUE...][:Title] e.g. column:Orders.Category:[Total Sales]:Sales by category"""
     return suggest_mod.parse_chart(spec)
@@ -895,9 +913,19 @@ def visual_list(page_name):
 @click.option("--title", "-t")
 @click.option("--mode", type=click.Choice(["Dropdown", "Between", "Basic"]),
               help="Slicer style (default: Between for dates/numbers, else Dropdown)")
+@click.option("--size", type=float, default=20, show_default=True, help="Textbox font size (pt)")
+@click.option("--bold/--no-bold", default=True, show_default=True, help="Textbox bold text")
+@click.option("--color", help="Textbox text colour #RRGGBB")
+@click.option("--align", type=click.Choice(["left", "center", "right"]), help="Textbox alignment")
+@click.option("--bg", help="Textbox background #RRGGBB")
+@click.option("--border", help="Textbox border colour #RRGGBB")
+@click.option("--radius", type=int, help="Textbox border corner radius")
 @handle
-def visual_add(page_name, kind, fields, category, roles, x, y, width, height, title, mode):
-    """Place one visual. KIND: a built-in type (see 'visual types'), textbox, or a custom visual."""
+def visual_add(page_name, kind, fields, category, roles, x, y, width, height, title, mode,
+               size, bold, color, align, bg, border, radius):
+    """Place one visual. KIND: a built-in type (see 'visual types'), textbox, or a custom visual.
+
+    Textbox: each -f is one paragraph; style with --size --color --align --bg --border --radius."""
     p = _mutate()
     bound = {}
     for r in roles:
@@ -908,11 +936,29 @@ def visual_add(page_name, kind, fields, category, roles, x, y, width, height, ti
     if kind.lower() == "textbox":
         if not fields:
             raise ValueError("textbox needs --field 'text'")
-        vid = p.add_textbox(page_name, " ".join(fields), x, y, width, height)
+        vid = p.add_textbox(page_name, list(fields), x, y, width, height, size=size, bold=bold, color=color,
+                            align=align, bg=bg, border=border, radius=radius)
+        need = p.textbox_min_height(size, len(fields))
+        if height < need:
+            out = {"page": page_name, "id": vid, "type": kind,
+                   "warning": f"height {height:g}px is under ~{need}px; Desktop will clip {size:g}pt text"}
+            if not _json:
+                click.secho("! " + out["warning"], fg="yellow", err=True)
+            emit(out, msg=f"Added {kind} {vid}")
+            return
     else:
         vid = p.add_visual(page_name, kind, list(fields), category, x, y, width, height, title, mode=mode,
                            roles=bound)
     emit({"page": page_name, "id": vid, "type": kind}, msg=f"Added {kind} {vid}")
+
+
+@visual.command("props")
+@click.argument("kind")
+@handle
+def visual_props(kind):
+    """Common formatting objects/properties for a type, for 'visual format' (not exhaustive)."""
+    emit([{"object": o, "properties": p_} for o, p_ in visuals_mod.props_for(kind).items()],
+         cols=["object", "properties"])
 
 
 @visual.command("remove")

@@ -324,6 +324,8 @@ class ReportMixin:
         if title:
             visual["visualContainerObjects"] = {"title": [{"properties": {
                 "show": {"expr": {"Literal": {"Value": "true"}}}, "text": _lit(title)}}]}
+            if vtype == "slicer":   # else Desktop shows the title and the field-name header ("Gender / Gender")
+                visual.setdefault("objects", {})["header"] = [{"properties": {"show": V.literal("false")}}]
         return self._write_visual(p, visual, x, y, width, height, z)
 
     def visual_type(self, kind: str):
@@ -342,14 +344,66 @@ class ReportMixin:
         raise ProjectError(f"Unknown visual type '{kind}'. Built-in: {', '.join(V.TYPES)}, textbox; "
                            "custom visuals must be added with 'visual custom import/add-public' first")
 
-    def add_textbox(self, page_ref, text, x=0, y=0, width=600, height=60, size=20, bold=True, z=None) -> str:
+    def add_textbox(self, page_ref, text, x=0, y=0, width=600, height=60, size=20, bold=True, z=None,
+                    color=None, align=None, bg=None, border=None, radius=None) -> str:
+        """text: one string or a list (one paragraph each). align: left|center|right.
+        bg/border: #RRGGBB for the container background/border; radius: border corner radius."""
+        from cli_anything.powerbi.core.project import ProjectError
         p = self._page(page_ref)
-        style = {"fontSize": f"{int(size)}pt"}
+        for name, c in (("color", color), ("bg", bg), ("border", border)):
+            if c and not V.HEX.match(c):
+                raise ProjectError(f"--{name} must be #RRGGBB, got {c!r}")
+        if align and align not in ("left", "center", "right"):
+            raise ProjectError("--align must be left, center or right")
+        style = {"fontSize": f"{size:g}pt"}
         if bold:
             style["fontWeight"] = "bold"
-        visual = {"visualType": "textbox", "objects": {"general": [{"properties": {
-            "paragraphs": [{"textRuns": [{"value": text, "textStyle": style}]}]}}]}}
+        if color:
+            style["color"] = color.upper()
+        paras = []
+        for t in [text] if isinstance(text, str) else text:
+            para = {"textRuns": [{"value": t, "textStyle": dict(style)}]}
+            if align:
+                para["horizontalTextAlignment"] = align
+            paras.append(para)
+        visual = {"visualType": "textbox", "objects": {"general": [{"properties": {"paragraphs": paras}}]}}
+        box = {}
+        if bg:
+            box["background"] = [{"properties": {"show": V.literal("true"), "color": V.literal(bg),
+                                                 "transparency": V.literal("0", "transparency")}}]
+        if border or radius is not None:
+            props = {"show": V.literal("true")}
+            if border:
+                props["color"] = V.literal(border)
+            if radius is not None:
+                props["radius"] = V.literal(str(int(radius)))
+            box["border"] = [{"properties": props}]
+        if box:
+            visual["visualContainerObjects"] = box
         return self._write_visual(p, visual, x, y, width, height, z)
+
+    @staticmethod
+    def textbox_min_height(size=20, lines=1) -> int:
+        """Rough px a textbox needs before Desktop clips it: lines of 1.2 x font px plus ~20 px padding."""
+        return round(lines * size * 4 / 3 * 1.2 + 20)
+
+    def format_page(self, page_ref, settings) -> dict:
+        """settings: [(object, property, value)], e.g. ('background', 'color', '#E3F2EF').
+        'background' is the page canvas, 'outspace' the wallpaper around it."""
+        p = self._page(page_ref)
+        rel = f"definition/pages/{p['id']}/page.json"
+        body = self._rj(rel)
+        for obj, prop, value in settings:
+            entries = body.setdefault("objects", {}).setdefault(obj, [])
+            entry = next((e for e in entries if "selector" not in e), None)
+            if entry is None:
+                entry = {"properties": {}}
+                entries.insert(0, entry)
+            entry.setdefault("properties", {})[prop] = V.literal(value, prop)
+            if obj in ("background", "outspace") and prop == "color":
+                entry["properties"].setdefault("transparency", V.literal("0", "transparency"))
+        self._wj(rel, body)
+        return body.get("objects", {})
 
     def _write_visual(self, page, visual, x, y, width, height, z):
         vid = new_id()
@@ -396,7 +450,7 @@ class ReportMixin:
             if entry is None:
                 entry = {"properties": {}}
                 entries.insert(0, entry)
-            entry.setdefault("properties", {})[prop] = V.literal(value)
+            entry.setdefault("properties", {})[prop] = V.literal(value, prop)
         for key in ("objects", "visualContainerObjects"):
             if key in vis and not vis[key]:
                 del vis[key]
@@ -618,7 +672,15 @@ class ReportMixin:
         for rel, text in self.rfiles.items():
             if not rel.endswith("visual.json"):
                 continue
-            vis = json.loads(text).get("visual", {})
+            root = json.loads(text)
+            extra = sorted(set(root) - VISUAL_ROOT_KEYS)
+            if extra:   # Desktop refuses to open the report ("additional property ... in the root")
+                hint = " (formatting cards belong inside \"visual\")" if set(extra) & {
+                    "objects", "visualContainerObjects"} else ""
+                issues.append({"level": "error", "where": rel,
+                               "message": f"visual.json has properties the schema doesn't allow at its root: "
+                                          f"{', '.join(extra)}{hint}"})
+            vis = root.get("visual", {})
             vt, used = vis.get("visualType", ""), list(vis.get("query", {}).get("queryState", {}))
             if vt in V.BY_VISUAL_TYPE:
                 rdefs = V.roles_of(V.TYPES[V.BY_VISUAL_TYPE[vt]][1])
@@ -643,6 +705,11 @@ class ReportMixin:
             issues.append({"level": "error", "where": "definition/report.json",
                            "message": f"custom theme file {ct['name']} is missing"})
         return issues
+
+
+# root properties the visualContainer schema (2.x) allows
+VISUAL_ROOT_KEYS = {"$schema", "name", "position", "visual", "visualGroup", "parentGroupName", "filterConfig",
+                    "isHidden", "annotations", "howCreated"}
 
 
 def _field_refs(node):

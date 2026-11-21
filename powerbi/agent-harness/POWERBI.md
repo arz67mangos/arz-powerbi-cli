@@ -50,6 +50,9 @@ its two documented, scriptable surfaces:
 | Format › Columns/Data colors (all, per series, per point) | `visual color PAGE ID #RRGGBB [--series F \| --point VALUE]` |
 | More options › Sort axis / Sort by | `visual sort PAGE ID FIELD [--asc]` |
 | Drag / resize / bring forward | `visual move PAGE ID --x --y -W -H --z` |
+| Format pane: which cards/properties exist | `visual props TYPE` (common ones, not exhaustive) |
+| Insert › Text box, font size/colour/alignment, box fill/border | `visual add PAGE textbox -f TEXT [-f TEXT2] --size --color --align --bg --border --radius` |
+| Format page › Canvas background / Wallpaper | `page format PAGE --background #hex [--wallpaper #hex]`, or `background.transparency=N` |
 | Visualizations › … › Import a visual from a file | `visual custom import FILE.pbiviz` |
 | Visualizations › … › Get more visuals (AppSource) | `visual custom add-public GUID` |
 | Remove a custom visual | `visual custom list`, `visual custom remove REF [--force]` |
@@ -143,6 +146,15 @@ its two documented, scriptable surfaces:
 - **Colours**: `dataPoint.fill` with no selector (whole visual), `{"metadata": queryRef}` for a
   series, or a `Comparison` scope on the category column for one value.
 - **Sort**: `query.sortDefinition` with one field and direction.
+- **Slicers**: `-c`/`-f` fill `Values`. With `-t`, the slicer header (`objects.header.show=false`) is
+  hidden so the field name isn't shown twice.
+- **Textboxes**: one paragraph per `-f`; text style (`fontSize`, `color`, `fontWeight`) per text run,
+  `horizontalTextAlignment` per paragraph; `--bg`/`--border`/`--radius` go to `visualContainerObjects`.
+  Desktop pads the box, so a line needs about 1.2 x font px + 20 px; the CLI warns below that.
+- **Page format**: `page.json` `objects.background` (canvas) and `objects.outspace` (wallpaper);
+  `transparency` is written as a double (`0D`), which is how Desktop stores it.
+- **Validation** also checks visual.json root keys against the visualContainer schema; Desktop refuses
+  a report with e.g. `visualContainerObjects` at the root instead of inside `visual`.
 - **Custom visuals**: a `.pbiviz` is a zip of `package.json` + `resources/<guid>.pbiviz.json`
   (the capabilities list the data roles). `import` copies both files to
   `<Report>/CustomVisuals/<guid>/` and registers a `CustomVisual` resource package in

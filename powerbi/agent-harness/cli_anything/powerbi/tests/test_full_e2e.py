@@ -547,6 +547,25 @@ class TestVisualsSubprocess:
         assert next(v for v in self._j(p + ["visual", "list", "Page 1"]) if v["id"] == combo)["x"] == 600
         assert self._j(p + ["project", "validate"])["valid"] is True
 
+    def test_feedback_fixes(self, demo):
+        d, pbip = demo
+        p = ["-p", pbip]
+        self._j(p + ["visual", "add", "Page 1", "slicer", "-c", "Sales.Product", "-t", "Product"])
+        tb = self._j(p + ["visual", "add", "Page 1", "textbox", "-f", "Hello", "-f", "World", "--size", "11",
+                          "--no-bold", "--color", "#0F766E", "--align", "center", "--bg", "#FFFFFF",
+                          "--border", "#0F766E", "--radius", "20", "-H", "30"])
+        assert "clip" in tb["warning"]
+        ok = self._j(p + ["visual", "add", "Page 1", "textbox", "-f", "Fits", "--size", "11", "-H", "40"])
+        assert "warning" not in ok
+        r = self._run(["--json"] + p + ["visual", "add", "Page 1", "textbox", "-f", "x", "--color", "red"],
+                      check=False)
+        assert r.returncode == 1 and "#RRGGBB" in json.loads(r.stdout)["error"]
+        pf = self._j(p + ["page", "format", "Page 1", "--background", "#E3F2EF", "background.transparency=10"])
+        assert pf["objects"]["background"][0]["properties"]["transparency"]["expr"]["Literal"]["Value"] == "10D"
+        props = {r_["object"]: r_["properties"] for r_ in self._j(p + ["visual", "props", "lineChart"])}
+        assert "start" in props["valueAxis"]
+        assert self._j(p + ["project", "validate"])["valid"] is True
+
     def test_custom_visuals(self, demo):
         d, pbip = demo
         p = ["-p", pbip]
