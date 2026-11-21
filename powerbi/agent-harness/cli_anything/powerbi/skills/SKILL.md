@@ -308,6 +308,9 @@ cli-anything-powerbi visual props lineChart                        # format obje
 cli-anything-powerbi visual add Overview slicer -c People.Gender -t Gender   # title hides the slicer header
 cli-anything-powerbi visual add Overview textbox -f "Headline" -f "Second line" --size 11 --no-bold \n    --color "#0F766E" --align center --bg "#FFFFFF" --border "#0F766E" --radius 20 -H 60
 cli-anything-powerbi page format Overview --background "#E3F2EF"   # or background.color=... outspace.color=...
+cli-anything-powerbi project check-visuals Overview               # clipped text, overlaps, off-page, filterConfig
+cli-anything-powerbi desktop reload --page Overview --screenshot shot.png   # close (no save), reopen, capture
+cli-anything-powerbi desktop screenshot shot.png                  # capture the open Desktop window
 ```
 
 ### Generate dashboards from the model
@@ -358,9 +361,10 @@ cli-anything-powerbi --json dax query "EVALUATE SUMMARIZECOLUMNS(Sales[Product],
 11. `page build` makes a consistent grid (title, KPI cards, charts 2 per row, table). Use `--replace` to rebuild a page; the theme supplies the card look, so don't style visuals one by one.
 12. Report commands need the PBIR format (new projects have it). Older projects: open and save once in Desktop.
 13. For a dashboard, start with `page suggest TABLE` to see the plan, then `page template` (one page) or `page generate spec.json` (theme + pages). Relate dimension tables first so their categories are used. Use `--monthly` for date trends on import tables.
-14. Textboxes: each -f is a paragraph; keep height >= the warned minimum (~40 px for one 11pt line) or Desktop clips it. Page colours: `page format PAGE --background #hex`. Never put `objects`/`visualContainerObjects` at the root of visual.json by hand; `project validate` flags it.
-15. Charts beyond the basics: check `visual types` for role names and `visual props TYPE` for format properties, then bind with `-r ROLE=FIELD`. Formatting is `object.property=value` (container cards like title/background/border are routed automatically). Custom visuals must be imported or registered before `visual add` can use them; AppSource visuals accept any role name, so check the visual's docs.
-16. Not supported: conditional formatting, bookmarks, maps, local DAX against Desktop, deploying PBIP to the service, query parameters.
+14. Edit-check loop: after edits run `project check-visuals PAGE`, then `desktop reload --page PAGE --screenshot shot.png` and read the PNG to see the real rendering. Reload never answers a save prompt; if Desktop asks, tell the user to choose Don't save (Save would overwrite the CLI's edits). The screenshot shows the signed-in account in the title bar, so don't share it publicly. Donut/pie percent decimals: `labels.percentageLabelPrecision=0` (labelPrecision only affects values).
+15. Textboxes: each -f is a paragraph; keep height >= the warned minimum (~40 px for one 11pt line) or Desktop clips it. Page colours: `page format PAGE --background #hex`. Never put `objects`/`visualContainerObjects` at the root of visual.json by hand; `project validate` flags it.
+16. Charts beyond the basics: check `visual types` for role names and `visual props TYPE` for format properties, then bind with `-r ROLE=FIELD`. Formatting is `object.property=value` (container cards like title/background/border are routed automatically). Custom visuals must be imported or registered before `visual add` can use them; AppSource visuals accept any role name, so check the visual's docs.
+17. Not supported: conditional formatting, bookmarks, maps, local DAX against Desktop, deploying PBIP to the service, query parameters.
 
 ## Version
 

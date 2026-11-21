@@ -68,7 +68,8 @@ _AXES = {
 }
 _SLICES = {
     "legend": _AXES["legend"],
-    "labels": "show, color, fontSize, labelStyle (Category|Data value|Percent of total|Category, data value|...)",
+    "labels": "show, color, fontSize, labelStyle (Category|Data value|Percent of total|Category, data value|...), "
+              "labelPrecision (value decimals), percentageLabelPrecision (percent decimals)",
     "dataPoint": _AXES["dataPoint"],
 }
 _FAMILIES = {

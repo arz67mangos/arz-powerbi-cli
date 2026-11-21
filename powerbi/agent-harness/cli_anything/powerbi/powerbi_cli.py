@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import sys
+from pathlib import Path
 
 import click
 
@@ -197,6 +198,23 @@ def project_close():
 def project_info():
     """Summary counts for the open project."""
     emit(get_session().require().info())
+
+
+@project.command("check-visuals")
+@click.argument("page_name", required=False)
+@handle
+def project_check_visuals(page_name):
+    """Layout lint: clipped textboxes/slicers, off-page or overlapping visuals, bad filterConfig, wrong roles."""
+    issues = get_session().require().check_visuals(page_name)
+    errors = [i for i in issues if i["level"] == "error"]
+    if _json:
+        emit({"ok": not errors, "issues": issues})
+    elif issues:
+        emit(issues, cols=["level", "where", "message"])
+    else:
+        click.secho("✓ no layout problems found", fg="green")
+    if errors and not _repl_mode:
+        sys.exit(2)
 
 
 @project.command("validate")
@@ -1290,6 +1308,58 @@ def desktop_open(path):
         p = get_session().require()
         path = str(p.pbip or p.model_dir)
     emit(pbi.open_in_desktop(path), msg="Launched Power BI Desktop")
+
+
+def _desktop_target(path):
+    """-> (pbip path, window-title stem) from PATH or the open project."""
+    if not path:
+        p = get_session().require()
+        path = str(p.pbip or p.model_dir)
+    return path, Path(path).stem
+
+
+@desktop.command("reload")
+@click.argument("path", required=False)
+@click.option("--page", help="Open on this page (sets the report's active page first)")
+@click.option("--wait", "wait_s", default=120.0, show_default=True, help="Max seconds to wait for close/open")
+@click.option("--settle", default=15.0, show_default=True, help="Seconds to let visuals render after opening")
+@click.option("--screenshot", "shot", type=click.Path(dir_okay=False), help="Then save a PNG of the window")
+@handle
+def desktop_reload(path, page, wait_s, settle, shot):
+    """Close Desktop for this .pbip (never answers a save prompt), reopen it and wait for it to load.
+
+    Desktop doesn't pick up edits made on disk; this does the close/reopen. If Desktop asks to save,
+    the command stops: choose 'Don't save' there to keep the CLI's edits. Data isn't refreshed from
+    sources (Home > Refresh), but new measures and report edits show without it."""
+    path, stem = _desktop_target(path)
+    if page:
+        p = proj_mod.Project(path)
+        p.set_active_page(page)
+        p.save()
+    closed = pbi.close_desktop(stem, timeout=min(wait_s, 60))
+    opened = pbi.open_in_desktop(path)
+    win = pbi.wait_for_desktop(stem, timeout=wait_s, settle=settle)
+    res = {"closed_pids": closed, "opened": opened["opened"], "pid": win["pid"], "title": win["title"]}
+    if shot:
+        res.update(pbi.screenshot_desktop(stem, shot))
+    emit(res, msg=f"Reloaded {stem} in Power BI Desktop")
+
+
+@desktop.command("screenshot")
+@click.argument("out", type=click.Path(dir_okay=False))
+@click.option("--file", "path", help=".pbip whose window to capture (default: the open project)")
+@handle
+def desktop_screenshot(out, path):
+    """Save a PNG of the Power BI Desktop window showing this report (as it is on screen now)."""
+    path, stem = _desktop_target(path)
+    emit(pbi.screenshot_desktop(stem, out), msg=f"Saved {out}")
+
+
+@desktop.command("windows")
+@handle
+def desktop_windows_cmd():
+    """List open Power BI Desktop windows."""
+    emit([{"pid": w["pid"], "title": w["title"]} for w in pbi.desktop_windows()], cols=["pid", "title"])
 
 
 # ── session ─────────────────────────────────────────────────────────────

@@ -192,6 +192,14 @@ class ReportMixin:
         self._wj("definition/pages/pages.json", meta)
         return pid
 
+    def set_active_page(self, ref: str) -> str:
+        """The page Desktop opens on."""
+        p = self._page(ref)
+        meta = self._pages_meta()
+        meta["activePageName"] = p["id"]
+        self._wj("definition/pages/pages.json", meta)
+        return p["id"]
+
     def remove_page(self, ref: str):
         from cli_anything.powerbi.core.project import ProjectError
         p = self._page(ref)
@@ -652,6 +660,63 @@ class ReportMixin:
                 made.append(self.add_visual(p["id"], "table", table, x=margin, y=y, width=inner, height=rh))
         return {"page": p["displayName"], "page_id": p["id"], "visuals": made}
 
+    # ── layout lint ──
+    def check_visuals(self, page_ref=None) -> list[dict]:
+        """Layout problems Desktop only shows when the report is opened: text that will clip, visuals off
+        the canvas or partly overlapping, malformed filterConfig, plus validate()'s per-visual issues."""
+        pages = [self._page(page_ref)] if page_ref else self.pages()
+        issues = []
+        for pg in pages:
+            prefix = f"definition/pages/{pg['id']}/"
+            W, H = pg.get("width") or 1280, pg.get("height") or 720
+            boxes = []
+            pj = json.loads(self.rfiles.get(prefix + "page.json", "{}"))
+            issues += [{"level": "error", "where": prefix + "page.json", "message": m}
+                       for m in _filter_config_problems(pj.get("filterConfig"))]
+            for rel in sorted(r for r in self.rfiles if r.startswith(prefix + "visuals/") and r.endswith("visual.json")):
+                body = json.loads(self.rfiles[rel])
+                vis, pos = body.get("visual", {}), body.get("position", {})
+                vt = vis.get("visualType", "?")
+                x, y, w, h = (float(pos.get(k, 0)) for k in ("x", "y", "width", "height"))
+                where = f"{pg['displayName']}/{body.get('name', rel.split('/')[-2])} ({vt})"
+
+                def warn(msg, level="warning"):
+                    issues.append({"level": level, "where": where, "message": msg})
+                if x < 0 or y < 0 or x + w > W + 1 or y + h > H + 1:
+                    warn(f"outside the {W}x{H} page (x={x:g}, y={y:g}, {w:g}x{h:g})")
+                if vt == "textbox":
+                    paras = (vis.get("objects", {}).get("general", [{}])[0].get("properties", {})
+                             .get("paragraphs", []))
+                    sizes = [float(str(r.get("textStyle", {}).get("fontSize", "11pt")).rstrip("pt") or 11)
+                             for p_ in paras for r in p_.get("textRuns", [])] or [11]
+                    need = self.textbox_min_height(max(sizes), max(len(paras), 1))
+                    if h < need:
+                        warn(f"textbox is {h:g}px high; {max(sizes):g}pt x {max(len(paras), 1)} line(s) needs "
+                             f"~{need}px, so Desktop will clip it")
+                elif vt == "slicer":
+                    objs = vis.get("objects", {})
+                    mode = str(objs.get("data", [{}])[0].get("properties", {}).get("mode", {})
+                               .get("expr", {}).get("Literal", {}).get("Value", "'Basic'")).strip("'")
+                    header = objs.get("header", [{}])[0].get("properties", {}).get("show") != V.literal("false")
+                    need = (40 if mode == "Dropdown" else 80) + (25 if header else 0)
+                    if h < need:
+                        warn(f"{mode} slicer is {h:g}px high; needs ~{need}px"
+                             f"{' with its header' if header else ''} or it scrolls/clips")
+                for m in _filter_config_problems(body.get("filterConfig")):
+                    warn(m, "error")
+                if vt not in ("shape", "basicShape", "image", "actionButton"):   # decoration overlaps on purpose
+                    boxes.append((where, x, y, w, h))
+            for i, (a, ax, ay, aw, ah) in enumerate(boxes):
+                for b, bx, by, bw, bh in boxes[i + 1:]:
+                    ix = min(ax + aw, bx + bw) - max(ax, bx)
+                    iy = min(ay + ah, by + bh) - max(ay, by)
+                    inside = (ax <= bx and ay <= by and ax + aw >= bx + bw and ay + ah >= by + bh) or                              (bx <= ax and by <= ay and bx + bw >= ax + aw and by + bh >= ay + ah)
+                    if ix > 1 and iy > 1 and not inside:
+                        issues.append({"level": "warning", "where": a, "message": f"overlaps {b} by {ix:g}x{iy:g}px"})
+        names = {f"definition/pages/{pg['id']}/" for pg in pages}
+        issues += [i for i in self.report_issues() if any(i["where"].startswith(n) for n in names)]
+        return issues
+
     # ── validation ──
     def report_issues(self) -> list[dict]:
         if not self.report_dir or "definition/report.json" not in self.rfiles:
@@ -705,6 +770,33 @@ class ReportMixin:
             issues.append({"level": "error", "where": "definition/report.json",
                            "message": f"custom theme file {ct['name']} is missing"})
         return issues
+
+
+FILTER_TYPES = {"Categorical", "Advanced", "TopN", "RelativeDate", "RelativeTime", "Tuple", "Include", "Exclude",
+                "VisualTopN", "Passthrough"}
+
+
+def _filter_config_problems(fc) -> list[str]:
+    """Shape checks for filterConfig (page.json / visual.json) that Desktop rejects on open."""
+    if fc is None:
+        return []
+    if not isinstance(fc, dict) or not isinstance(fc.get("filters", []), list):
+        return ["filterConfig must be an object with a 'filters' list"]
+    out = []
+    for n, f in enumerate(fc.get("filters", [])):
+        if not isinstance(f, dict):
+            out.append(f"filterConfig.filters[{n}] is not an object")
+            continue
+        if not isinstance(f.get("name"), str) or not f.get("name"):
+            out.append(f"filterConfig.filters[{n}] has no name")
+        if not isinstance(f.get("field"), dict) or not ({"Column", "Measure", "Aggregation", "HierarchyLevel"}
+                                                        & set(f.get("field", {}) if isinstance(f.get("field"), dict) else {})):
+            out.append(f"filterConfig.filters[{n}] needs a field (Column/Measure/Aggregation)")
+        if "type" in f and f["type"] not in FILTER_TYPES:
+            out.append(f"filterConfig.filters[{n}] has unknown type {f['type']!r} ({', '.join(sorted(FILTER_TYPES))})")
+        if "filter" in f and not (isinstance(f["filter"], dict) and "Where" in f["filter"]):
+            out.append(f"filterConfig.filters[{n}].filter needs a 'Where' clause")
+    return out
 
 
 # root properties the visualContainer schema (2.x) allows

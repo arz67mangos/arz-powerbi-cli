@@ -97,6 +97,9 @@ cli-anything-powerbi visual props lineChart                        # format obje
 cli-anything-powerbi visual add Overview slicer -c People.Gender -t Gender   # title hides the slicer header
 cli-anything-powerbi visual add Overview textbox -f "Headline" -f "Second line" --size 11 --no-bold \n    --color "#0F766E" --align center --bg "#FFFFFF" --border "#0F766E" --radius 20 -H 60
 cli-anything-powerbi page format Overview --background "#E3F2EF"   # or background.color=... outspace.color=...
+cli-anything-powerbi project check-visuals Overview               # clipped text, overlaps, off-page, filterConfig
+cli-anything-powerbi desktop reload --page Overview --screenshot shot.png   # close (no save), reopen, capture
+cli-anything-powerbi desktop screenshot shot.png                  # capture the open Desktop window
 
 # Service
 cli-anything-powerbi auth login

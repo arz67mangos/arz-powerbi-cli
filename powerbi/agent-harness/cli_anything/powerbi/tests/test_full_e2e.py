@@ -566,6 +566,20 @@ class TestVisualsSubprocess:
         assert "start" in props["valueAxis"]
         assert self._j(p + ["project", "validate"])["valid"] is True
 
+    def test_check_visuals_and_desktop_cmds(self, demo):
+        d, pbip = demo
+        p = ["-p", pbip]
+        self._j(p + ["visual", "add", "Page 1", "textbox", "-f", "Tight", "--size", "11", "-H", "26"])
+        r = self._run(["--json"] + p + ["project", "check-visuals", "Page 1"], check=False)
+        out = json.loads(r.stdout)
+        assert r.returncode == 0 and out["ok"] is True and "clip" in out["issues"][0]["message"]
+        self._j(p + ["page", "add", "Other"])
+        assert self._j(p + ["project", "check-visuals", "Other"]) == {"ok": True, "issues": []}
+        if os.name == "nt":
+            assert isinstance(self._j(["desktop", "windows"]), list)
+            r = self._run(["--json"] + p + ["desktop", "screenshot", str(d / "x.png")], check=False)
+            assert r.returncode == 1 and "No Power BI Desktop window" in json.loads(r.stdout)["error"]
+
     def test_custom_visuals(self, demo):
         d, pbip = demo
         p = ["-p", pbip]

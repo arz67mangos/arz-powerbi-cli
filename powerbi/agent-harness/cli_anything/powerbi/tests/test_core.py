@@ -1,5 +1,6 @@
 """Unit tests: synthetic TMDL, no Power BI install or network needed."""
 import json
+import os
 
 import pytest
 
@@ -1196,3 +1197,47 @@ def test_props_for():
     assert all(VZ.props_for(k) for k in VZ.TYPES)
     with pytest.raises(ValueError, match="Unknown visual type"):
         VZ.props_for("sparkle")
+
+
+# ── Desktop loop: check-visuals, active page, desktop window helpers ──
+def test_check_visuals(proj):
+    proj.add_measure("Sales", "Total", "SUM(Sales[Amount])")
+    t = proj.add_textbox("Page 1", "Clipped", y=10, height=26, size=11)                    # needs ~38px
+    s = proj.add_visual("Page 1", "slicer", category="Sales.Product", mode="Dropdown", y=100, height=50)
+    a = proj.add_visual("Page 1", "card", ["[Total]"], x=600, y=300, width=200, height=100)
+    proj.add_visual("Page 1", "card", ["[Total]"], x=700, y=350, width=200, height=100)  # partly overlaps a
+    proj.add_visual("Page 1", "card", ["[Total]"], x=1200, y=600, width=200, height=200)  # off the 1280x720 page
+    pid = proj.pages()[0]["id"]
+    rel = f"definition/pages/{pid}/visuals/{a}/visual.json"
+    body = json.loads(proj.rfiles[rel])
+    body["filterConfig"] = {"filters": [{"name": "f1", "type": "Weird", "field": {"Column": {}}}, {"type": "Categorical"}]}
+    proj.rfiles[rel] = json.dumps(body)
+    msgs = [(i["level"], i["message"]) for i in proj.check_visuals("Page 1")]
+    text = " | ".join(m for _, m in msgs)
+    assert "Desktop will clip it" in text and "Dropdown slicer is 50px" in text
+    assert "overlaps" in text and "outside the 1280x720 page" in text
+    assert ("error", "filterConfig.filters[0] has unknown type 'Weird' (Advanced, Categorical, Exclude, Include, "
+            "Passthrough, RelativeDate, RelativeTime, TopN, Tuple, VisualTopN)") in msgs
+    assert any("filters[1] has no name" in m for _, m in msgs)
+    assert not any(t in i["where"] and "clip" not in i["message"] for i in proj.check_visuals())
+    assert s
+
+
+def test_check_visuals_clean_and_active_page(proj):
+    proj.add_textbox("Page 1", "Fits", height=40, size=11)
+    proj.add_visual("Page 1", "slicer", category="Sales.Product", title="Product", mode="Dropdown", y=60, height=50)
+    assert proj.check_visuals("Page 1") == []
+    proj.add_page("Second")
+    pid = proj.set_active_page("Second")
+    assert json.loads(proj.rfiles["definition/pages/pages.json"])["activePageName"] == pid
+    assert "percentageLabelPrecision" in VZ.props_for("donut")["labels"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Desktop window control is Windows-only")
+def test_desktop_window_helpers():
+    from cli_anything.powerbi.utils import powerbi_backend as B
+    assert isinstance(B.desktop_windows(), list)
+    assert B.desktop_windows("no-such-report-xyz") == []
+    assert B.close_desktop("no-such-report-xyz", timeout=1) == []       # nothing open: nothing to close
+    with pytest.raises(B.PowerBIError, match="No Power BI Desktop window"):
+        B.screenshot_desktop("no-such-report-xyz", "unused.png")

@@ -52,6 +52,9 @@ its two documented, scriptable surfaces:
 | Drag / resize / bring forward | `visual move PAGE ID --x --y -W -H --z` |
 | Format pane: which cards/properties exist | `visual props TYPE` (common ones, not exhaustive) |
 | Insert › Text box, font size/colour/alignment, box fill/border | `visual add PAGE textbox -f TEXT [-f TEXT2] --size --color --align --bg --border --radius` |
+| Close and reopen the file to see on-disk edits | `desktop reload [PBIP] [--page P] [--screenshot out.png]` |
+| Look at the report | `desktop screenshot out.png` (PNG of the Desktop window) |
+| Spot clipped text / overlaps before opening | `project check-visuals [PAGE]` |
 | Format page › Canvas background / Wallpaper | `page format PAGE --background #hex [--wallpaper #hex]`, or `background.transparency=N` |
 | Visualizations › … › Import a visual from a file | `visual custom import FILE.pbiviz` |
 | Visualizations › … › Get more visuals (AppSource) | `visual custom add-public GUID` |
@@ -153,6 +156,15 @@ its two documented, scriptable surfaces:
   Desktop pads the box, so a line needs about 1.2 x font px + 20 px; the CLI warns below that.
 - **Page format**: `page.json` `objects.background` (canvas) and `objects.outspace` (wallpaper);
   `transparency` is written as a double (`0D`), which is how Desktop stores it.
+- **Desktop loop (checked 2026-11-21)**: Desktop doesn't reload on-disk edits. `desktop reload` finds the
+  window by title (the .pbip name without extension), sends it WM_CLOSE like the X button, waits for the
+  process to exit, reopens the file and waits for the window plus `--settle` seconds. It never answers
+  dialogs: a save prompt makes it stop with an error. `--page` sets `pages.json` `activePageName` first.
+  `desktop screenshot` uses PrintWindow (PW_RENDERFULLCONTENT), so it works while the window is covered,
+  and writes the PNG with the standard library. Data isn't refreshed from sources.
+- **Checked in Desktop 2026-11-21**: donut/pie percent decimals are `labels.percentageLabelPrecision`
+  (`labelPrecision` left 32.59%; `percentageLabelPrecision=0` gave 33%). `visual color --point` on a
+  scatter with a Category colours that point.
 - **Validation** also checks visual.json root keys against the visualContainer schema; Desktop refuses
   a report with e.g. `visualContainerObjects` at the root instead of inside `visual`.
 - **Custom visuals**: a `.pbiviz` is a zip of `package.json` + `resources/<guid>.pbiviz.json`
